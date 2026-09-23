@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProofKeep - never miss a warranty window</title>
+<style>
+  :root { --ink:#1c2b26; --muted:#6b7a73; --accent:#2f6f5e; --accent-dk:#265c4e; --card:#ffffff; --bg:#f4f6f3; --warn-bg:#f6ecd2; --warn-ink:#8a6a14; --bad-bg:#f6e0dd; --bad-ink:#8f3a33; --ok-bg:#e2f0e6; --ok-ink:#2f6f45; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:680px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  .tag { color:var(--muted); margin:0 0 20px; line-height:1.45; }
+  .card { background:var(--card); border:1px solid #e3e8e4; border-radius:14px; padding:18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  input, select { padding:9px 10px; border:1px solid #d4dcd6; border-radius:8px; font-size:15px; background:#fff; }
+  input[type=text] { width:170px; }
+  input[type=date] { width:160px; }
+  select { width:130px; }
+  button { padding:10px 16px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; cursor:pointer; }
+  button:hover { background:var(--accent-dk); }
+  button.ghost { background:#eef1ee; color:var(--ink); }
+  button.ghost:hover { background:#e2e7e2; }
+  .item { display:flex; justify-content:space-between; gap:10px; padding:14px 0; border-top:1px solid #eef1ee; }
+  .item:first-of-type { border-top:0; }
+  .item h3 { margin:0 0 4px; font-size:17px; }
+  .item .meta { color:var(--muted); font-size:13px; line-height:1.5; }
+  .item .right { text-align:right; min-width:120px; }
+  .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; margin-bottom:6px; }
+  .pill.active { background:var(--ok-bg); color:var(--ok-ink); }
+  .pill.closing { background:var(--warn-bg); color:var(--warn-ink); }
+  .pill.expired { background:var(--bad-bg); color:var(--bad-ink); }
+  .days { font-size:15px; font-weight:600; }
+  .banner { background:var(--warn-bg); color:var(--warn-ink); border-radius:10px; padding:10px 14px; font-size:14px; margin-bottom:14px; }
+  .rm { font-size:12px; color:var(--muted); background:none; padding:2px 6px; }
+  .rm:hover { color:var(--bad-ink); background:none; text-decoration:underline; }
+  .empty { color:var(--muted); text-align:center; padding:18px 0 6px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ProofKeep</h1>
+  <p class="tag">The dishwasher breaks and you learn the warranty expired last month. ProofKeep keeps every coverage window in one place, counts down to each lapse, and warns you while there's still time to file the claim.</p>
+
+  <div class="card">
+    <div class="row">
+      <div><label for="name">Item</label><input type="text" id="name" placeholder="Dishwasher"></div>
+      <div><label for="purchase">Purchased</label><input type="date" id="purchase"></div>
+      <div><label for="months">Warranty</label>
+        <select id="months">
+          <option value="3">3 months</option>
+          <option value="6">6 months</option>
+          <option value="12" selected>1 year</option>
+          <option value="24">2 years</option>
+          <option value="36">3 years</option>
+          <option value="60">5 years</option>
+          <option value="120">10 years</option>
+        </select>
+      </div>
+      <button id="addBtn">Add item</button>
+    </div>
+  </div>
+
+  <div class="banner hidden" id="banner"></div>
+  <div class="card" id="listCard">
+    <div class="empty" id="emptyMsg">Nothing tracked yet. Add the thing you bought most recently.</div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script>
+(function(){
+  var E = ProofKeepEngine;
+  var items = [];
+  try { items = JSON.parse(localStorage.getItem('proofkeep') || '[]'); } catch(e){}
+  var $ = function(id){ return document.getElementById(id); };
+  function todayISO(){
+    var d = new Date();
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+  function save(){ localStorage.setItem('proofkeep', JSON.stringify(items)); }
+
+  function render(){
+    var t = todayISO();
+    var sorted = E.sortItems(items, t);
+    $('emptyMsg').style.display = items.length ? 'none' : 'block';
+    var closing = E.closingCount(items, t, 30);
+    if (closing > 0){
+      $('banner').classList.remove('hidden');
+      $('banner').textContent = closing === 1
+        ? '1 warranty lapses within 30 days - if anything is wrong with it, file the claim now.'
+        : closing + ' warranties lapse within 30 days - check them before the windows close.';
+    } else {
+      $('banner').classList.add('hidden');
+    }
+    var html = '';
+    for (var i = 0; i < sorted.length; i++){
+      var it = sorted[i];
+      var end = E.coverageEndISO(it.purchase, it.months);
+      var st = E.status(t, end);
+      var pill = st === 'active' ? 'active' : st === 'closing' ? 'closing - claim soon' : 'expired';
+      html += '<div class="item">'
+        + '<div><h3>' + escapeHtml(it.name) + '</h3>'
+        + '<div class="meta">bought ' + E.fmtISO(it.purchase) + ' - covered through ' + E.fmtISO(end) + '</div></div>'
+        + '<div class="right"><span class="pill ' + st + '">' + pill + '</span>'
+        + '<div class="days">' + E.daysLabel(t, end) + '</div>'
+        + '<button class="rm" data-idx="' + items.indexOf(it) + '">remove</button></div></div>';
+    }
+    $('list').innerHTML = html;
+    var rms = document.querySelectorAll('.rm');
+    for (var j = 0; j < rms.length; j++){
+      rms[j].addEventListener('click', function(){
+        items.splice(parseInt(this.getAttribute('data-idx'), 10), 1);
+        save(); render();
+      });
+    }
+  }
+  function escapeHtml(s){
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  $('addBtn').addEventListener('click', function(){
+    var name = $('name').value.trim();
+    var purchase = $('purchase').value;
+    var months = parseInt($('months').value, 10);
+    if (!name || !purchase || !months) return;
+    items.push({ name: name, purchase: purchase, months: months });
+    $('name').value = ''; $('purchase').value = '';
+    save(); render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
